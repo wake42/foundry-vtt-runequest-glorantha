@@ -1,5 +1,5 @@
 import { registerRqgSystemSettings } from "./system/rqgSystemSettings.js";
-import { loadHandlebarsTemplates } from "./system/loadHandlebarsTemplates.js";
+import { loadHandlebarsTemplates, templatePaths } from "./system/loadHandlebarsTemplates.js";
 import { RqgActor } from "./actors/rqgActor.js";
 import { RqgItem } from "./items/rqgItem";
 import { registerHandlebarsHelpers } from "./system/registerHandlebarsHelpers";
@@ -29,6 +29,10 @@ import { RqidBatchEditor } from "./applications/rqid-batch-editor/rqidBatchEdito
 import { ItemTypeEnum } from "./data-model/item-data/itemTypes";
 import { dragRulerModuleIntegrationInit } from "./external-module-integrations/drag-ruler";
 import { initSockets } from "./sockets/RqgSocket";
+import { AbilityRoll } from "./rolls/AbilityRoll/AbilityRoll";
+import { CharacteristicRoll } from "./rolls/CharacteristicRoll/CharacteristicRoll";
+import { SpiritMagicRoll } from "./rolls/SpiritMagicRoll/SpiritMagicRoll";
+import { RuneMagicRoll } from "./rolls/RuneMagicRoll/RuneMagicRoll";
 
 Hooks.once("init", async () => {
   console.log(
@@ -78,6 +82,15 @@ Hooks.once("init", async () => {
     ],
   };
 
+  CONFIG.Dice.rolls = [
+    ...CONFIG.Dice.rolls,
+    AbilityRoll,
+    CharacteristicRoll,
+    SpiritMagicRoll,
+    RuneMagicRoll,
+  ];
+  CONFIG.ChatMessage.template = templatePaths.chatMessage;
+
   Rqid.init();
   RqgChatMessage.init();
   RqgActiveEffect.init();
@@ -95,6 +108,7 @@ Hooks.once("init", async () => {
 
   dragRulerModuleIntegrationInit();
 
+  // TODO RollTables init fails in Foundry v13
   // @ts-expect-error unregisterSheet
   RollTables.unregisterSheet("core", RollTableConfig);
   // @ts-expect-error registerSheet

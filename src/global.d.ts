@@ -47,7 +47,6 @@ declare global {
   namespace ClientSettings {
     interface Values {
       "rqg.worldLanguage": string;
-      "rqg.specialCrit": boolean;
       "rqg.fumbleRollTable": string;
       "rqg.worldMigrationVersion": string;
       "rqg.hitLocations": object;
@@ -64,6 +63,19 @@ declare global {
   interface CONFIG {
     RQG: RqgConfig;
   }
+}
+
+declare global {
+  const CONST: {
+    CHAT_MESSAGE_STYLES: {
+      OTHER: 0;
+      OOC: 1;
+      IC: 2;
+      EMOTE: 3;
+      WHISPER: 4;
+      ROLL: 5;
+    };
+  };
 }
 
 declare global {
