@@ -1,16 +1,24 @@
 import { RqgCalculations } from "../system/rqgCalculations";
+import type { CharacterDataPropertiesData } from "../data-model/actor-data/rqgActorData";
 import { ActorTypeEnum } from "../data-model/actor-data/rqgActorData";
-import { ResponsibleItemClass } from "../data-model/item-data/itemTypes";
+import { ItemTypeEnum, ResponsibleItemClass } from "../data-model/item-data/itemTypes";
 import { RqgActorSheet } from "./rqgActorSheet";
 import { DamageCalculations } from "../system/damageCalculations";
-import { getGame, hasOwnProperty, localize } from "../system/util";
+import {
+  assertItemType,
+  getGame,
+  hasOwnProperty,
+  localize,
+  localizeCharacteristic,
+  requireValue,
+  RqgError,
+  usersIdsThatOwnActor,
+} from "../system/util";
 import { initializeAllCharacteristics } from "./context-menus/characteristic-context-menu";
 import { systemId } from "../system/config";
-import { ResultEnum } from "../data-model/shared/ability";
 import { Rqid } from "../system/api/rqidApi";
 import type { AnyDocumentData } from "@league-of-foundry-developers/foundry-vtt-types/src/foundry/common/abstract/data.mjs";
 import type EmbeddedCollection from "@league-of-foundry-developers/foundry-vtt-types/src/foundry/common/abstract/embedded-collection.mjs";
-import type { CharacterDataPropertiesData } from "../data-model/actor-data/rqgActorData";
 import type { Document } from "@league-of-foundry-developers/foundry-vtt-types/src/foundry/common/abstract/module.mjs";
 import type { DocumentModificationOptions } from "@league-of-foundry-developers/foundry-vtt-types/src/foundry/common/abstract/document.mjs";
 import type {
@@ -19,6 +27,16 @@ import type {
 } from "@league-of-foundry-developers/foundry-vtt-types/src/foundry/common/data/data.mjs";
 import type { RqgActiveEffect } from "../active-effect/rqgActiveEffect";
 import type { RqgItem } from "../items/rqgItem";
+import { AbilitySuccessLevelEnum } from "../rolls/AbilityRoll/AbilityRoll.defs";
+import { CharacteristicRollOptions } from "../rolls/CharacteristicRoll/CharacteristicRoll.types";
+import { CharacteristicRoll } from "../rolls/CharacteristicRoll/CharacteristicRoll";
+import { Characteristic, Characteristics } from "../data-model/actor-data/characteristics";
+import { CharacteristicRollDialog } from "../applications/CharacteristicRollDialog/characteristicRollDialog";
+import { AbilityRollOptions } from "../rolls/AbilityRoll/AbilityRoll.types";
+import { AbilityRollDialog } from "../applications/AbilityRollDialog/abilityRollDialog";
+import { AbilityRoll } from "../rolls/AbilityRoll/AbilityRoll";
+import { PartialAbilityItem } from "../applications/AbilityRollDialog/AbilityRollDialogData.types";
+import { ActorHealthState } from "../data-model/actor-data/attributes";
 
 export class RqgActor extends Actor {
   static init() {
@@ -35,6 +53,124 @@ export class RqgActor extends Actor {
   declare prototypeToken: PrototypeTokenData; // v10 type workaround
   declare statuses: Set<string>; // v11 type workaround
   declare appliedEffects: RqgActiveEffect[]; // v11 type workaround
+
+  /**
+   * Only handles embedded Items
+   */
+  public getEmbeddedDocumentsByRqid(rqid: string | undefined): RqgItem[] {
+    if (!rqid) {
+      return [];
+    }
+    return this.items.filter((i) => i.getFlag(systemId, "documentRqidFlags.id") === rqid);
+  }
+
+  public getBestEmbeddedDocumentByRqid(rqid: string | undefined): RqgItem | undefined {
+    return this.getEmbeddedDocumentsByRqid(rqid).sort(Rqid.compareRqidPrio)[0];
+  }
+
+  public async characteristicRoll(
+    characteristicName: keyof Characteristics,
+    options: Partial<CharacteristicRollOptions> = {},
+  ): Promise<void> {
+    const rollOptions = this.getCharacteristicRollDefaults(characteristicName, options);
+    await new CharacteristicRollDialog(this, rollOptions).render(true);
+  }
+  /**
+   * Do a characteristic roll and handle possible POW experience check afterward.
+   */
+  public async characteristicRollImmediate(
+    characteristicName: keyof Characteristics,
+    options: Omit<CharacteristicRollOptions, "characteristicValue" | "characteristicName"> = {},
+  ): Promise<void> {
+    const rollOptions = this.getCharacteristicRollDefaults(characteristicName, options);
+    const characteristicRoll = await CharacteristicRoll.rollAndShow(rollOptions);
+    await this.checkExperience(rollOptions.characteristicName, characteristicRoll.successLevel);
+  }
+
+  private getCharacteristicRollDefaults(
+    characteristicName: keyof Characteristics,
+    options: Partial<CharacteristicRollOptions>,
+  ): CharacteristicRollOptions {
+    const actorCharacteristics: any = this.system.characteristics;
+    const rollCharacteristic = actorCharacteristics[characteristicName] as
+      | Characteristic
+      | undefined;
+
+    if (!rollCharacteristic) {
+      throw new RqgError(
+        `Tried to roll characteristic with unknown characteristic name [${options.characteristicName}]`,
+      );
+    }
+
+    return foundry.utils.mergeObject(
+      options,
+      {
+        characteristicName: characteristicName,
+        characteristicValue: rollCharacteristic.value ?? 0,
+        difficulty: 5,
+        speaker: ChatMessage.getSpeaker({ actor: this }),
+      },
+      { overwrite: false },
+    ) as CharacteristicRollOptions;
+  }
+
+  /**
+   * Open an ability roll dialog for reputation   */
+  public async reputationRoll(
+    options: Omit<AbilityRollOptions, "naturalSkill"> = {},
+  ): Promise<void> {
+    const reputationItem = this.createReputationFakeItem();
+    await new AbilityRollDialog(reputationItem, options).render(true);
+  }
+
+  /**
+   * Do a reputation (ability) Roll
+   */
+  public async reputationRollImmediate(
+    options: Omit<AbilityRollOptions, "naturalSkill"> = {},
+  ): Promise<void> {
+    const reputationItem = this.createReputationFakeItem();
+    const speaker = ChatMessage.getSpeaker({ actor: this });
+
+    const combinedOptions = foundry.utils.mergeObject(
+      options,
+      {
+        naturalSkill: reputationItem.system.chance,
+        modifiers: [],
+        abilityName: reputationItem.name ?? undefined,
+        abilityImg: reputationItem.img ?? undefined,
+        speaker: speaker,
+      },
+      { overwrite: false },
+    );
+
+    await AbilityRoll.rollAndShow(combinedOptions);
+  }
+
+  private createReputationFakeItem(): PartialAbilityItem {
+    const defaultItemIconSettings: any = getGame().settings.get(
+      systemId,
+      "defaultItemIconSettings",
+    );
+    return {
+      name: "Reputation",
+      img: defaultItemIconSettings.reputation,
+      system: {
+        chance: this.system.background.reputation ?? 0,
+      },
+    } as const;
+  }
+
+  // TODO should use result: SpiritMagicSuccessLevelEnum
+  public async drawMagicPoints(amount: number, result: AbilitySuccessLevelEnum): Promise<void> {
+    if (result <= AbilitySuccessLevelEnum.Success) {
+      const newMp = (this.system.attributes.magicPoints.value || 0) - amount;
+      await this.update({ "system.attributes.magicPoints.value": newMp });
+      ui.notifications?.info(
+        localize("RQG.Dialog.SpiritMagicRoll.SuccessfullyCastInfo", { amount: amount }),
+      );
+    }
+  }
 
   /**
    * First prepare any derived data which is actor-specific and does not depend on Items or Active Effects
@@ -126,6 +262,145 @@ export class RqgActor extends Actor {
     attributes.spiritCombatDamage = RqgCalculations.spiritCombatDamage(pow, cha);
 
     attributes.health = DamageCalculations.getCombinedActorHealth(this);
+  }
+
+  /**
+   * Return the bodyType of an actor. Currently only "humanoid" or "other"
+   */
+  public getBodyType(): string {
+    const actorHitlocationRqids = this.items
+      .filter((i) => i.type === ItemTypeEnum.HitLocation)
+      .map((hl) => hl.flags?.rqg?.documentRqidFlags?.id ?? "");
+    if (
+      CONFIG.RQG.bodytypes.humanoid.length === actorHitlocationRqids.length &&
+      CONFIG.RQG.bodytypes.humanoid.every((hitLocationRqid) =>
+        actorHitlocationRqids.includes(hitLocationRqid),
+      )
+    ) {
+      return "humanoid";
+    } else {
+      return "other";
+    }
+  }
+
+  // Currently only marks POW experience
+  public async checkExperience(
+    characteristicName: string,
+    result: AbilitySuccessLevelEnum | undefined,
+  ): Promise<void> {
+    if (
+      result != null &&
+      result <= AbilitySuccessLevelEnum.Success &&
+      characteristicName === "power" &&
+      !this.system.characteristics.power.hasExperience
+    ) {
+      await this.update({ "system.characteristics.power.hasExperience": true });
+      const msg = localize("RQG.Actor.AwardExperience.GainedExperienceInfo", {
+        actorName: this.name,
+        itemName: localizeCharacteristic("power"),
+      });
+      ui.notifications?.info(msg);
+    }
+  }
+
+  /**
+   * Apply damage to a hitLocation and this actor.
+   * The HitLocation AP will be subtracted unless ignoreAP is true.
+   */
+  public async applyDamage(
+    damageAmount: number,
+    hitLocationRollTotal: number,
+    ignoreAP: boolean = false,
+    applyToActorHP: boolean = true,
+  ): Promise<void> {
+    const damagedHitLocation = this.items.find(
+      (i) =>
+        i.type === ItemTypeEnum.HitLocation &&
+        hitLocationRollTotal >= i.system.dieFrom &&
+        hitLocationRollTotal <= i.system.dieTo,
+    );
+
+    const hitLocationAP = damagedHitLocation?.system.armorPoints ?? 0;
+    const damageAfterAP = ignoreAP ? damageAmount : Math.max(0, damageAmount - hitLocationAP);
+    if (damageAfterAP === 0) {
+      return;
+    }
+    const speaker = ChatMessage.getSpeaker({ actor: this, token: this.token ?? undefined });
+    const { hitLocationUpdates, actorUpdates, notification, uselessLegs } =
+      DamageCalculations.addWound(
+        damageAfterAP,
+        applyToActorHP,
+        damagedHitLocation!,
+        this,
+        speaker.alias!,
+      );
+
+    for (const update of uselessLegs) {
+      // @ts-expect-error _id
+      const leg = this.items.get(update._id);
+      assertItemType(leg?.type, ItemTypeEnum.HitLocation);
+      await leg.update(update);
+    }
+
+    if (hitLocationUpdates) {
+      await damagedHitLocation!.update(hitLocationUpdates);
+    }
+    if (actorUpdates) {
+      await this.update(actorUpdates as any);
+    } // TODO fix type
+    await ChatMessage.create({
+      user: getGame().user?.id,
+      speaker: speaker,
+      content: localize("RQG.Item.HitLocation.AddWoundChatContent", {
+        actorName: this.name,
+        hitLocationName: damagedHitLocation!.name,
+        notification: notification,
+      }),
+      whisper: usersIdsThatOwnActor(damagedHitLocation!.parent),
+    });
+
+    await this.updateTokenEffectFromHealth();
+  }
+
+  /**
+   * Calculate and set actor token effects ("shock", "unconscious""dead")
+   * from what the actors health is.
+   */
+  public async updateTokenEffectFromHealth(): Promise<void> {
+    const health2Effect: Map<ActorHealthState, { id: string; label: string; icon: string }> =
+      new Map([
+        ["shock", this.findEffect("shock")],
+        ["unconscious", this.findEffect("unconscious")],
+        ["dead", this.findEffect("dead")],
+      ]);
+
+    const newEffect = health2Effect.get(this.system.attributes.health);
+
+    for (const status of health2Effect.values()) {
+      const actorHasEffectAlready = this.statuses.has(status?.id);
+      if (newEffect?.id === status.id && !actorHasEffectAlready) {
+        const asOverlay = status.id === "dead";
+        // Turn on the new effect
+        // @ts-expect-error toggleStatusEffect
+        await this.toggleStatusEffect(status.id, {
+          overlay: asOverlay,
+          active: true,
+        });
+      } else if (newEffect?.id !== status.id && actorHasEffectAlready) {
+        // This is not the effect we're applying, but it is on, so we need to turn it off
+        // @ts-expect-error toggleStatusEffect
+        await this.toggleStatusEffect(status.id, {
+          overlay: false,
+          active: false,
+        });
+      }
+    }
+  }
+
+  private findEffect(health: ActorHealthState): { id: string; label: string; icon: string } {
+    const effect = CONFIG.statusEffects.find((e) => e.id === health);
+    requireValue(effect, `Required statusEffect ${health} is missing`); // TODO translate message
+    return effect;
   }
 
   private calcMaxEncumbrance(
@@ -265,29 +540,5 @@ export class RqgActor extends Actor {
     const pow = characteristics.power.value;
     const cha = characteristics.charisma.value;
     return { str, con, siz, dex, int, pow, cha };
-  }
-
-  public async drawMagicPoints(amount: number, result: ResultEnum): Promise<void> {
-    if (result <= ResultEnum.Success) {
-      const newMp = (this.system.attributes.magicPoints.value || 0) - amount;
-      await this.update({ "system.attributes.magicPoints.value": newMp });
-      ui.notifications?.info(
-        localize("RQG.Dialog.spiritMagicChat.SuccessfullyCastInfo", { amount: amount }),
-      );
-    }
-  }
-
-  /**
-   * Only handles embedded Items
-   */
-  public getEmbeddedDocumentsByRqid(rqid: string | undefined): RqgItem[] {
-    if (!rqid) {
-      return [];
-    }
-    return this.items.filter((i) => i.getFlag(systemId, "documentRqidFlags.id") === rqid);
-  }
-
-  public getBestEmbeddedDocumentByRqid(rqid: string): RqgItem | undefined {
-    return this.getEmbeddedDocumentsByRqid(rqid).sort(Rqid.compareRqidPrio)[0];
   }
 }

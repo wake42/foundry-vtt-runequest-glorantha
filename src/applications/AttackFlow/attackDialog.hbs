@@ -1,0 +1,121 @@
+{{log "*** Attack Dialog" this}}
+<form>
+  <header class="roll-header">
+    <h1>{{skillItem.name}}</h1>
+    <div class="sub-header">{{abilityChance}}%</div>
+  </header>
+  <div class="key-value-grid p-0 mb-1-5rem">
+    <label>
+      {{localize "RQG.Dialog.Attack.AttackingActor"}}
+    </label>
+    <select name="attackingActorUuid">
+      {{selectOptions attackingActorOptions selected=object.attackingActorUuid localize=false}}
+    </select>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.AttackingWeapon"}}
+    </label>
+    <select name="attackingWeaponUuid">
+      {{selectOptions attackingWeaponOptions selected=object.attackingWeaponUuid localize=false}}
+    </select>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.WeaponUsage"}}
+    </label>
+    <div>
+      <select name="usageType">
+        {{selectOptions usageTypeOptions selected=object.usageType localize=true}}
+      </select>
+      {{#if (eq object.usageType "missile")}}
+        {{#if isOutOfAmmo}}
+          <span>{{localize "RQG.Dialog.Attack.OutOfAmmo"}}</span>
+        {{else}}
+          <span>{{localize "RQG.Dialog.Attack.AmmoQuantity"}} {{ammoQuantity}}</span>
+        {{/if}}
+      {{/if}}
+
+    </div>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.DamageBonusFrom"}}
+    </label>
+    <select name="attackDamageBonus">
+      {{selectOptions damageBonusSourceOptions selected=object.attackDamageBonus}}
+    </select>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.HitLocationFormula"}}
+    </label>
+    <select name="hitLocationFormula">
+      {{selectOptions hitLocationFormulaOptions selected=object.hitLocationFormula}}
+    </select>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.ExtraDamage"}}
+    </label>
+    <div>
+      <input type="text" value="{{object.attackExtraDamage}}" name="attackExtraDamage" {{checked object.attackExtraDamage}}>
+    </div>
+
+    <h2 class="submenu-span">{{localize "RQG.Dialog.Common.Modifiers"}}</h2>
+
+    <label>
+      {{localize "RQG.Dialog.AbilityRoll.Augment"}}
+    </label>
+    <select name="augmentModifier">
+      {{selectOptions augmentOptions selected=object.augmentModifier localize=true}}
+    </select>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.ProneTarget"}}
+    </label>
+    <div>
+      <input type="checkbox" name="proneTarget" {{checked object.proneTarget}}>
+      {{#if object.proneTarget}} +40%{{/if}}
+    </div>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.UnawareTarget"}}
+    </label>
+    <div>
+      <input type="checkbox" name="unawareTarget" {{checked object.unawareTarget}}>
+      {{#if object.unawareTarget}} +40%{{/if}}
+    </div>
+
+    <label>
+      {{localize "RQG.Dialog.Attack.Darkness"}}
+    </label>
+    <div>
+      <input type="checkbox" name="darkness" {{checked object.darkness}}>
+      {{#if object.darkness}} -75%{{/if}}
+    </div>
+
+    <label>
+      {{localize "RQG.Dialog.Common.Halved"}}
+    </label>
+    <div>
+      <input type="checkbox" name="halved" {{checked object.halved}}>
+      {{#if object.halved}} {{halvedModifier}}%{{/if}}
+    </div>
+
+    <input type="text" style="text-align:end;font-weight:bold;" value="{{object.otherModifierDescription}}" name="otherModifierDescription">
+    <div>
+      <input type="number" value="{{object.otherModifier}}" name="otherModifier"> %
+    </div>
+  </div>
+  <div class="flexrow flex-wrap gap03rem">
+    <div class="target-box" data-tooltip="{{localize "RQG.Dialog.Common.TargetChance"}}">
+      <i class="fa-solid fa-bullseye"></i><br>
+      {{totalChance}}%
+    </div>
+    {{#with (lookup weaponItem.system.usage weaponItem.system.defaultUsage)}}
+      {{#each combatManeuvers}}
+        {{#unless (eq damageType "parry")}}
+        <button data-combat-maneuver-name="{{name}}" name="combatManeuverRoll">
+          {{name}}
+        </button>
+        {{/unless}}
+      {{/each}}
+    {{/with}}
+  </div>
+</form>
